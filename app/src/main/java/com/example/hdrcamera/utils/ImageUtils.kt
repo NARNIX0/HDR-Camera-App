@@ -44,7 +44,7 @@ object ImageUtils {
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/HDRCamera")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/HDRCameraAppOutput")
                 }
                 
                 val contentResolver: ContentResolver = context.contentResolver
@@ -60,7 +60,7 @@ object ImageUtils {
                 }
             } else {
                 // For devices before Android 10
-                val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString() + "/HDRCamera"
+                val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString() + "/HDRCameraAppOutput"
                 val directory = File(imagesDir)
                 if (!directory.exists()) {
                     val success = directory.mkdirs()
@@ -179,7 +179,7 @@ object ImageUtils {
         try {
             val directory = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                "HDRCamera"
+                "HDRCameraAppOutput"
             )
             
             Log.d(TAG, "Checking directory: ${directory.absolutePath}")
@@ -218,7 +218,7 @@ object ImageUtils {
             // Get directory for HDR images
             val directory = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                "HDRCamera"
+                "HDRCameraAppOutput"
             )
             
             Log.d(TAG, "Looking for images in directory: ${directory.absolutePath}")
@@ -302,33 +302,52 @@ object ImageUtils {
         try {
             val directory = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                "HDRCamera"
+                "HDRCameraAppOutput"
             )
             
-            if (!directory.exists() || !directory.isDirectory) {
-                Log.d(TAG, "Directory doesn't exist or is not a directory: ${directory.absolutePath}")
-                return null
+            // Also check batch subdirectories
+            val allDirs = mutableListOf<File>()
+            allDirs.add(directory)
+            
+            if (directory.exists() && directory.isDirectory) {
+                directory.listFiles()?.forEach { file ->
+                    if (file.isDirectory && file.name.startsWith("Batch_")) {
+                        allDirs.add(file)
+                    }
+                }
             }
             
-            val imageFiles = directory.listFiles { file -> 
-                file.isFile && (file.name.startsWith(HDR_IMAGE_PREFIX) || 
-                                file.name.startsWith(HDR_OUTPUT_PREFIX) || 
-                                file.name.toLowerCase(Locale.ROOT).endsWith(".jpg") || 
-                                file.name.toLowerCase(Locale.ROOT).endsWith(".jpeg"))
+            Log.d(TAG, "Searching in ${allDirs.size} directories for most recent image")
+            
+            val allImageFiles = mutableListOf<File>()
+            
+            // Collect all image files from all directories
+            for (dir in allDirs) {
+                dir.listFiles { file -> 
+                    file.isFile && (
+                        file.name.startsWith(HDR_IMAGE_PREFIX) || 
+                        file.name.startsWith(HDR_OUTPUT_PREFIX) || 
+                        file.name.startsWith("HDR_MERGED_") ||
+                        file.name.startsWith("HDR_RESULT_") ||
+                        file.name.toLowerCase(Locale.ROOT).endsWith(".jpg") || 
+                        file.name.toLowerCase(Locale.ROOT).endsWith(".jpeg")
+                    )
+                }?.let { files ->
+                    allImageFiles.addAll(files)
+                    Log.d(TAG, "Found ${files.size} image files in directory: ${dir.absolutePath}")
+                }
             }
             
-            if (imageFiles == null || imageFiles.isEmpty()) {
-                Log.d(TAG, "No image files found in directory: ${directory.absolutePath}")
+            if (allImageFiles.isEmpty()) {
+                Log.d(TAG, "No image files found in any directories")
                 return null
             }
             
             // Sort by last modified date, newest first
-            val mostRecentFile = imageFiles.maxByOrNull { it.lastModified() }
+            val mostRecentFile = allImageFiles.maxByOrNull { it.lastModified() }
             
             mostRecentFile?.let {
                 Log.d(TAG, "Found most recent HDR image file: ${it.absolutePath}")
-            } ?: run {
-                Log.d(TAG, "Couldn't determine most recent file among ${imageFiles.size} files")
             }
             
             return mostRecentFile
@@ -336,5 +355,16 @@ object ImageUtils {
             Log.e(TAG, "Error getting most recent HDR image file", e)
             return null
         }
+    }
+    
+    /**
+     * Get a content URI using FileProvider for a file
+     */
+    fun getFileProviderUri(context: Context, file: File): Uri {
+        return androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
     }
 } 
