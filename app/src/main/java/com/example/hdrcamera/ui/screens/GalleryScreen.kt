@@ -46,9 +46,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import coil.compose.AsyncImagePainter
-import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
+import androidx.compose.ui.viewinterop.AndroidView
+import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.request.RequestOptions
+import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
+import com.bumptech.glide.integration.compose.GlideImage
 import com.example.hdrcamera.utils.ImageUtils
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -58,7 +61,6 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import androidx.compose.ui.viewinterop.AndroidView
 
 private const val TAG = "GalleryScreen"
 
@@ -275,9 +277,9 @@ fun ImageItem(uri: Uri) {
     Log.d(TAG, "Loading image with URI: $uri (scheme: ${uri.scheme})")
     
     // States for image loading
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var directBitmap by remember { mutableStateOf<Bitmap?>(null) }
     
     // Convert file:// URIs to content:// URIs using FileProvider if needed
     val finalUri = remember(uri) {
@@ -306,73 +308,63 @@ fun ImageItem(uri: Uri) {
         }
     }
     
-    // Function to attempt direct bitmap loading
-    val loadDirectBitmap = {
-        MainScope().launch(Dispatchers.IO) {
+    // Load the bitmap directly
+    LaunchedEffect(finalUri) {
+        isLoading = true
+        withContext(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Attempting direct bitmap loading for URI: $finalUri")
+                Log.d(TAG, "Loading bitmap from URI: $finalUri")
                 val inputStream = context.contentResolver.openInputStream(finalUri)
                 if (inputStream != null) {
-                    Log.d(TAG, "Got input stream, decoding bitmap...")
-                    val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
                     inputStream.close()
                     
-                    if (bitmap != null) {
-                        Log.d(TAG, "Direct bitmap loading successful! Size: ${bitmap.width}x${bitmap.height}")
-                        withContext(Dispatchers.Main) {
-                            directBitmap = bitmap
-                            isLoading = false
-                            loadError = null
+                    // Report image dimensions from metadata
+                    Log.d(TAG, "Image dimensions: ${options.outWidth}x${options.outHeight}")
+                    
+                    // Reopen the stream to decode the actual bitmap
+                    val inputStream2 = context.contentResolver.openInputStream(finalUri)
+                    if (inputStream2 != null) {
+                        val decodingOptions = android.graphics.BitmapFactory.Options().apply {
+                            // Use a smaller sample size for better quality
+                            inSampleSize = 1 
                         }
-                    } else {
-                        Log.e(TAG, "BitmapFactory returned null")
-                        withContext(Dispatchers.Main) {
-                            loadError = "Failed to decode image"
-                            isLoading = false
+                        val loadedBitmap = android.graphics.BitmapFactory.decodeStream(inputStream2, null, decodingOptions)
+                        inputStream2.close()
+                        
+                        if (loadedBitmap != null) {
+                            Log.d(TAG, "Successfully loaded bitmap: ${loadedBitmap.width}x${loadedBitmap.height}")
+                            withContext(Dispatchers.Main) {
+                                bitmap = loadedBitmap
+                                isLoading = false
+                            }
+                        } else {
+                            Log.e(TAG, "Failed to decode bitmap")
+                            withContext(Dispatchers.Main) {
+                                loadError = "Failed to decode image"
+                                isLoading = false
+                            }
                         }
                     }
                 } else {
-                    Log.e(TAG, "InputStream is null for URI: $finalUri")
+                    Log.e(TAG, "Cannot open input stream for URI: $finalUri")
                     withContext(Dispatchers.Main) {
-                        loadError = "Cannot access image file"
+                        loadError = "Cannot open image"
                         isLoading = false
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Direct bitmap loading error: ${e.message}", e)
+                Log.e(TAG, "Error loading bitmap", e)
                 withContext(Dispatchers.Main) {
-                    loadError = e.message ?: "Unknown error"
+                    loadError = e.message
                     isLoading = false
                 }
             }
         }
     }
-    
-    // Attempt direct bitmap loading immediately
-    LaunchedEffect(finalUri) {
-        loadDirectBitmap()
-    }
-    
-    // Setup Coil image loading
-    val painter = rememberAsyncImagePainter(
-        model = ImageRequest.Builder(context)
-            .data(finalUri)
-            .crossfade(true)
-            .size(coil.size.Size.ORIGINAL) // Use original image size
-            .listener(
-                onSuccess = { _, result ->
-                    Log.d(TAG, "Coil successfully loaded image: $finalUri (size: ${result.drawable.intrinsicWidth}x${result.drawable.intrinsicHeight})")
-                    isLoading = false
-                    loadError = null
-                },
-                onError = { _, result ->
-                    val error = result.throwable
-                    Log.e(TAG, "Coil error for $finalUri: ${error.message}", error)
-                    // Don't set isLoading=false here, as we're relying on direct bitmap loading
-                }
-            )
-            .build()
-    )
     
     // Main UI
     Box(
@@ -383,47 +375,51 @@ fun ImageItem(uri: Uri) {
         contentAlignment = Alignment.Center
     ) {
         when {
-            // Direct bitmap loading succeeded
-            directBitmap != null -> {
+            bitmap != null -> {
+                // Display the bitmap
                 AndroidView(
                     factory = { ctx ->
                         android.widget.ImageView(ctx).apply {
                             scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                            setImageBitmap(bitmap)
                         }
                     },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { imageView ->
-                        imageView.setImageBitmap(directBitmap)
-                    }
+                    modifier = Modifier.fillMaxSize()
+                )
+                
+                // Show image dimensions in debug overlay
+                Text(
+                    "${bitmap?.width}x${bitmap?.height}",
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp),
+                    color = androidx.compose.ui.graphics.Color.White,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
                 )
             }
-            // Coil successfully loaded the image
-            painter.state is AsyncImagePainter.State.Success -> {
-                Image(
-                    painter = painter,
-                    contentDescription = "HDR Image",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            }
-            // Loading state
             isLoading -> {
-                CircularProgressIndicator()
+                CircularProgressIndicator(
+                    modifier = Modifier.size(40.dp)
+                )
             }
-            // Error state
             loadError != null -> {
+                // Error state
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(8.dp)
                 ) {
                     Text(
                         "Error: $loadError",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.ui.graphics.Color.Red
                     )
+                    // Add retry button
                     androidx.compose.material3.Button(
                         onClick = { 
                             isLoading = true
-                            loadDirectBitmap() 
+                            loadError = null
+                            // Trigger LaunchedEffect again by recreating the key
+                            uri.toString() + System.currentTimeMillis()
                         },
                         modifier = Modifier.padding(top = 8.dp)
                     ) {
@@ -433,6 +429,25 @@ fun ImageItem(uri: Uri) {
             }
         }
     }
+}
+
+// Calculate sample size for efficiently loading large bitmaps
+private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val height = options.outHeight
+    val width = options.outWidth
+    var inSampleSize = 1
+    
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+        
+        while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    
+    Log.d(TAG, "Calculated sample size: $inSampleSize for image ${width}x${height}")
+    return inSampleSize
 }
 
 @Preview(showBackground = true)
