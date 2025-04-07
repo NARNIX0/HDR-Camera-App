@@ -22,6 +22,7 @@ import java.util.Locale
 
 private const val TAG = "ImageUtils"
 private const val HDR_IMAGE_PREFIX = "HDR_IMG_"
+private const val HDR_OUTPUT_PREFIX = "HDR_Output_"
 
 object ImageUtils {
     /**
@@ -118,7 +119,7 @@ object ImageUtils {
         val contentResolver = context.contentResolver
         
         try {
-            Log.d(TAG, "Querying for HDR images with prefix: $HDR_IMAGE_PREFIX")
+            Log.d(TAG, "Querying for HDR images with prefix: $HDR_IMAGE_PREFIX or $HDR_OUTPUT_PREFIX")
             
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
@@ -126,9 +127,9 @@ object ImageUtils {
                 MediaStore.Images.Media.DATE_ADDED
             )
             
-            // Query for only our HDR images
-            val selection = "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?"
-            val selectionArgs = arrayOf("${HDR_IMAGE_PREFIX}%")
+            // Query for both types of our HDR images
+            val selection = "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ? OR ${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?"
+            val selectionArgs = arrayOf("${HDR_IMAGE_PREFIX}%", "${HDR_OUTPUT_PREFIX}%")
             
             // Sort by date, newest first
             val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
@@ -189,7 +190,10 @@ object ImageUtils {
             }
             
             val imageFiles = directory.listFiles { file -> 
-                file.isFile && file.name.startsWith(HDR_IMAGE_PREFIX) 
+                file.isFile && (file.name.startsWith(HDR_IMAGE_PREFIX) || 
+                                file.name.startsWith(HDR_OUTPUT_PREFIX) ||
+                                file.name.toLowerCase(Locale.ROOT).endsWith(".jpg") || 
+                                file.name.toLowerCase(Locale.ROOT).endsWith(".jpeg"))
             }
             
             Log.d(TAG, "Found ${imageFiles?.size ?: 0} files in directory")
@@ -227,6 +231,7 @@ object ImageUtils {
             // Find all image files in the directory
             val imageFiles = directory.listFiles { file -> 
                 file.isFile && (file.name.startsWith(HDR_IMAGE_PREFIX) || 
+                                file.name.startsWith(HDR_OUTPUT_PREFIX) ||
                                 file.name.toLowerCase(Locale.ROOT).endsWith(".jpg") || 
                                 file.name.toLowerCase(Locale.ROOT).endsWith(".jpeg"))
             }
@@ -307,6 +312,7 @@ object ImageUtils {
             
             val imageFiles = directory.listFiles { file -> 
                 file.isFile && (file.name.startsWith(HDR_IMAGE_PREFIX) || 
+                                file.name.startsWith(HDR_OUTPUT_PREFIX) || 
                                 file.name.toLowerCase(Locale.ROOT).endsWith(".jpg") || 
                                 file.name.toLowerCase(Locale.ROOT).endsWith(".jpeg"))
             }

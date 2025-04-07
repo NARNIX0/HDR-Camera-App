@@ -24,6 +24,10 @@ import coil.annotation.ExperimentalCoilApi
 import coil.compose.LocalImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.util.DebugLogger
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import java.util.concurrent.TimeUnit
 import com.example.hdrcamera.ui.screens.CameraScreen
 import com.example.hdrcamera.ui.screens.GalleryScreen
 import com.example.hdrcamera.ui.screens.HomeScreen
@@ -37,9 +41,16 @@ class MainActivity : ComponentActivity() {
     // Create a custom image loader for better handling of file URIs
     @OptIn(ExperimentalCoilApi::class)
     private val imageLoader by lazy {
+        // Create logging interceptor
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.HEADERS
+        }
+        
         ImageLoader.Builder(this)
             .crossfade(true)
             .respectCacheHeaders(false) // Important for local files
+            .allowHardware(false) // Disable hardware bitmaps to avoid some issues with local files
+            .logger(DebugLogger()) // Enable logging for debugging
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
@@ -49,6 +60,14 @@ class MainActivity : ComponentActivity() {
                 DiskCache.Builder()
                     .directory(File(this.cacheDir, "image_cache"))
                     .maxSizePercent(0.1)
+                    .build()
+            }
+            .okHttpClient {
+                // Custom OkHttp client with longer timeouts
+                OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .addInterceptor(loggingInterceptor)
                     .build()
             }
             .build()

@@ -310,13 +310,15 @@ fun ImageItem(uri: Uri) {
     val loadDirectBitmap = {
         MainScope().launch(Dispatchers.IO) {
             try {
+                Log.d(TAG, "Attempting direct bitmap loading for URI: $finalUri")
                 val inputStream = context.contentResolver.openInputStream(finalUri)
                 if (inputStream != null) {
+                    Log.d(TAG, "Got input stream, decoding bitmap...")
                     val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
                     inputStream.close()
                     
                     if (bitmap != null) {
-                        Log.d(TAG, "Direct bitmap loading successful")
+                        Log.d(TAG, "Direct bitmap loading successful! Size: ${bitmap.width}x${bitmap.height}")
                         withContext(Dispatchers.Main) {
                             directBitmap = bitmap
                             isLoading = false
@@ -330,14 +332,14 @@ fun ImageItem(uri: Uri) {
                         }
                     }
                 } else {
-                    Log.e(TAG, "InputStream is null")
+                    Log.e(TAG, "InputStream is null for URI: $finalUri")
                     withContext(Dispatchers.Main) {
                         loadError = "Cannot access image file"
                         isLoading = false
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Direct bitmap loading error", e)
+                Log.e(TAG, "Direct bitmap loading error: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     loadError = e.message ?: "Unknown error"
                     isLoading = false
@@ -346,22 +348,27 @@ fun ImageItem(uri: Uri) {
         }
     }
     
+    // Attempt direct bitmap loading immediately
+    LaunchedEffect(finalUri) {
+        loadDirectBitmap()
+    }
+    
     // Setup Coil image loading
     val painter = rememberAsyncImagePainter(
         model = ImageRequest.Builder(context)
             .data(finalUri)
             .crossfade(true)
+            .size(coil.size.Size.ORIGINAL) // Use original image size
             .listener(
-                onSuccess = { _, _ ->
-                    Log.d(TAG, "Coil successfully loaded image: $finalUri")
+                onSuccess = { _, result ->
+                    Log.d(TAG, "Coil successfully loaded image: $finalUri (size: ${result.drawable.intrinsicWidth}x${result.drawable.intrinsicHeight})")
                     isLoading = false
+                    loadError = null
                 },
                 onError = { _, result ->
-                    Log.e(TAG, "Coil error: ${result.throwable.message}", result.throwable)
-                    loadError = "Failed to load image"
-                    isLoading = false
-                    // Try direct loading as fallback
-                    loadDirectBitmap()
+                    val error = result.throwable
+                    Log.e(TAG, "Coil error for $finalUri: ${error.message}", error)
+                    // Don't set isLoading=false here, as we're relying on direct bitmap loading
                 }
             )
             .build()
@@ -375,48 +382,53 @@ fun ImageItem(uri: Uri) {
             .aspectRatio(1f),
         contentAlignment = Alignment.Center
     ) {
-        if (painter.state is AsyncImagePainter.State.Success) {
-            // Coil successfully loaded the image
-            Image(
-                painter = painter,
-                contentDescription = "HDR Image",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        } else if (directBitmap != null) {
-            // Direct bitmap loading succeeded - use AndroidView to display the bitmap
-            AndroidView(
-                factory = { ctx ->
-                    android.widget.ImageView(ctx).apply {
-                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { imageView ->
-                    imageView.setImageBitmap(directBitmap)
-                }
-            )
-        } else if (isLoading) {
-            // Loading state
-            CircularProgressIndicator()
-        } else if (loadError != null) {
-            // Error state
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(8.dp)
-            ) {
-                Text(
-                    "Error loading image",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
-                )
-                androidx.compose.material3.Button(
-                    onClick = { 
-                        isLoading = true
-                        loadDirectBitmap() 
+        when {
+            // Direct bitmap loading succeeded
+            directBitmap != null -> {
+                AndroidView(
+                    factory = { ctx ->
+                        android.widget.ImageView(ctx).apply {
+                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        }
                     },
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.fillMaxSize(),
+                    update = { imageView ->
+                        imageView.setImageBitmap(directBitmap)
+                    }
+                )
+            }
+            // Coil successfully loaded the image
+            painter.state is AsyncImagePainter.State.Success -> {
+                Image(
+                    painter = painter,
+                    contentDescription = "HDR Image",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            // Loading state
+            isLoading -> {
+                CircularProgressIndicator()
+            }
+            // Error state
+            loadError != null -> {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(8.dp)
                 ) {
-                    Text("Retry")
+                    Text(
+                        "Error: $loadError",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                    )
+                    androidx.compose.material3.Button(
+                        onClick = { 
+                            isLoading = true
+                            loadDirectBitmap() 
+                        },
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        Text("Retry")
+                    }
                 }
             }
         }

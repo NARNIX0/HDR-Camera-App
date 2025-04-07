@@ -32,6 +32,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -70,6 +72,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.hdrcamera.utils.ImageSaver
 import com.example.hdrcamera.utils.ImageUtils
 
 private const val TAG = "CameraScreen"
@@ -80,9 +83,18 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Request camera permission
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
+    
+    // Request storage permission (only needed for API <= 28)
+    val storagePermissionState = rememberPermissionState(
+        permission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+    )
+    
+    // Check if we need to request storage permission
+    val needsStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
     
     // Capture state
     var isCapturing by remember { mutableStateOf(false) }
@@ -98,10 +110,13 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                     }
                 }
             )
+        },
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
         }
     ) { paddingValues ->
         if (!cameraPermissionState.status.isGranted) {
-            // If permission is not granted, show permission request UI
+            // If camera permission is not granted, show permission request UI
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -115,8 +130,23 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                     Text("Request Camera Permission")
                 }
             }
+        } else if (needsStoragePermission && !storagePermissionState.status.isGranted) {
+            // If storage permission is needed but not granted, show permission request UI
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Storage permission is required to save HDR images to your gallery")
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = { storagePermissionState.launchPermissionRequest() }) {
+                    Text("Request Storage Permission")
+                }
+            }
         } else {
-            // Permission is granted, set up the camera preview
+            // All permissions granted, set up the camera preview
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -257,49 +287,52 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                                                 
                                                 Log.d(TAG, "Captured ${capturedImages.size} images")
                                                 
-                                                // Save the first image as a placeholder for the processed HDR image
-                                                // In a real app, you would process these into an HDR image first
+                                                // Save the middle image (best exposed) as HDR 
                                                 if (capturedImages.isNotEmpty()) {
-                                                    // Save the image to gallery
-                                                    val savedUri = ImageUtils.saveImageToGallery(context, capturedImages.first())
+                                                    // Check if we need and have storage permission
+                                                    val hasStoragePermission = !needsStoragePermission || 
+                                                            storagePermissionState.status.isGranted
                                                     
-                                                    if (savedUri != null) {
-                                                        Toast.makeText(
-                                                            context,
-                                                            "HDR image saved to gallery",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
+                                                    if (hasStoragePermission) {
+                                                        // Get the middle image (usually best exposed)
+                                                        val imageToSave = capturedImages[capturedImages.size / 2]
+                                                        
+                                                        // Save using our new ImageSaver utility
+                                                        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                                                        val fileName = "HDR_IMG_${timestamp}.jpg"
+                                                        val saved = ImageSaver.saveBitmapToGallery(
+                                                            context = context,
+                                                            bitmap = imageToSave,
+                                                            displayName = fileName
+                                                        )
+                                                        
+                                                        if (saved) {
+                                                            snackbarHostState.showSnackbar("HDR image saved to gallery")
+                                                        } else {
+                                                            snackbarHostState.showSnackbar("Failed to save HDR image")
+                                                        }
                                                     } else {
-                                                        Toast.makeText(
-                                                            context,
-                                                            "Failed to save HDR image",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
+                                                        // Show message if we don't have permission
+                                                        snackbarHostState.showSnackbar(
+                                                            "Storage permission needed to save images"
+                                                        )
                                                     }
                                                 }
                                             } else {
                                                 Log.w(TAG, "Exposure compensation not supported")
-                                                Toast.makeText(
-                                                    context,
-                                                    "Your device doesn't support exposure compensation",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                                                snackbarHostState.showSnackbar(
+                                                    "Your device doesn't support exposure compensation"
+                                                )
                                             }
                                         } else {
                                             Log.e(TAG, "Camera not initialized")
-                                            Toast.makeText(
-                                                context,
-                                                "Camera not initialized",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                            snackbarHostState.showSnackbar("Camera not initialized")
                                         }
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Error capturing HDR images", e)
-                                        Toast.makeText(
-                                            context,
-                                            "Error capturing HDR images: ${e.message}",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        snackbarHostState.showSnackbar(
+                                            "Error capturing HDR images: ${e.message}"
+                                        )
                                     } finally {
                                         isCapturing = false
                                     }
@@ -344,7 +377,7 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                         // Handle any errors
                         e.printStackTrace()
                         Log.e(TAG, "Failed to set up camera", e)
-                        Toast.makeText(context, "Failed to start camera: ${e.message}", Toast.LENGTH_SHORT).show()
+                        snackbarHostState.showSnackbar("Failed to start camera: ${e.message}")
                     }
                 }
             }
