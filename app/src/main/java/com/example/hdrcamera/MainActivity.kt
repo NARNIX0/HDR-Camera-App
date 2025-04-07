@@ -19,59 +19,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import coil.ImageLoader
-import coil.annotation.ExperimentalCoilApi
-import coil.compose.LocalImageLoader
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
-import coil.util.DebugLogger
-import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-import java.util.concurrent.TimeUnit
 import com.example.hdrcamera.ui.screens.CameraScreen
 import com.example.hdrcamera.ui.screens.GalleryScreen
 import com.example.hdrcamera.ui.screens.HomeScreen
+import com.example.hdrcamera.ui.screens.HDRMergeScreen
 import com.example.hdrcamera.ui.theme.HDRCameraTheme
-import java.io.File
+import com.bumptech.glide.Glide
 
 private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
-    
-    // Create a custom image loader for better handling of file URIs
-    @OptIn(ExperimentalCoilApi::class)
-    private val imageLoader by lazy {
-        // Create logging interceptor
-        val loggingInterceptor = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.HEADERS
-        }
-        
-        ImageLoader.Builder(this)
-            .crossfade(true)
-            .respectCacheHeaders(false) // Important for local files
-            .allowHardware(false) // Disable hardware bitmaps to avoid some issues with local files
-            .logger(DebugLogger()) // Enable logging for debugging
-            .memoryCache {
-                MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
-                    .build()
-            }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(File(this.cacheDir, "image_cache"))
-                    .maxSizePercent(0.1)
-                    .build()
-            }
-            .okHttpClient {
-                // Custom OkHttp client with longer timeouts
-                OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .addInterceptor(loggingInterceptor)
-                    .build()
-            }
-            .build()
-    }
     
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -124,17 +81,12 @@ class MainActivity : ComponentActivity() {
         requestPermissions.launch(permissions.toTypedArray())
         
         setContent {
-            // Provide our custom image loader
-            androidx.compose.runtime.CompositionLocalProvider(
-                LocalImageLoader provides imageLoader
-            ) {
-                HDRCameraTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
-                    ) {
-                        AppNavigation()
-                    }
+            HDRCameraTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    AppNavigation()
                 }
             }
         }
@@ -152,7 +104,8 @@ fun AppNavigation() {
         composable("home") {
             HomeScreen(
                 onNavigateToCamera = { navController.navigate("camera") },
-                onNavigateToGallery = { navController.navigate("gallery") }
+                onNavigateToGallery = { navController.navigate("gallery") },
+                onNavigateToHdrMerge = { navController.navigate("hdrmerge") }
             )
         }
         
@@ -164,6 +117,12 @@ fun AppNavigation() {
         
         composable("gallery") {
             GalleryScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        
+        composable("hdrmerge") {
+            HDRMergeScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
