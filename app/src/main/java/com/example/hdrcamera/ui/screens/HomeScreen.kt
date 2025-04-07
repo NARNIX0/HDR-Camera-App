@@ -19,7 +19,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun HomeScreen(
     onNavigateToCamera: () -> Unit,
-    onNavigateToGallery: () -> Unit = {}
+    onNavigateToGallery: () -> Unit = {},
+    onNavigateToHdrMerge: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -55,11 +56,18 @@ fun HomeScreen(
         Button(onClick = onNavigateToGallery) {
             Text("View Gallery")
         }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // HDR Merge button
+        Button(onClick = onNavigateToHdrMerge) {
+            Text("HDR Merge")
+        }
     }
 }
 
 @Preview(showBackground = true)
 @Composable
 fun HomeScreenPreview() {
-    HomeScreen(onNavigateToCamera = {}, onNavigateToGallery = {})
+    HomeScreen(onNavigateToCamera = {}, onNavigateToGallery = {}, onNavigateToHdrMerge = {})
 } 
