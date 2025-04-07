@@ -216,7 +216,7 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                             value = shotCount,
                             onValueChange = { shotCount = it },
                             valueRange = 3f..7f,
-                            steps = 1, // 3, 5, 7 shots
+                            steps = 3, // 3, 4, 5, 6, 7 shots (4 steps = 5 values)
                             modifier = Modifier.fillMaxWidth()
                         )
                         
@@ -232,7 +232,7 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                             value = evStep,
                             onValueChange = { evStep = it },
                             valueRange = 0.5f..2.0f,
-                            steps = 2, // 0.5, 1.0, 1.5, 2.0 steps
+                            steps = 3, // 0.5, 1.0, 1.5, 2.0 steps (3 steps = 4 values)
                             modifier = Modifier.fillMaxWidth()
                         )
                         
@@ -244,8 +244,15 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                                 scope.launch {
                                     try {
                                         isCapturing = true
+                                        // Generate a new batch for all images in this capture session
+                                        ImageSaver.generateNewBatch()
+                                        
+                                        // Get current values from sliders
                                         val numShots = shotCount.toInt()
                                         val evValue = evStep
+                                        
+                                        // Debug log to verify the slider values are being used
+                                        Log.d(TAG, "Slider values -> Shots: $numShots, EV Step: $evValue")
                                         
                                         if (camera != null) {
                                             val cameraInfo = camera!!.cameraInfo
@@ -254,15 +261,16 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                                             
                                             if (exposureState.isExposureCompensationSupported) {
                                                 val exposureRange = exposureState.exposureCompensationRange
-                                                val evStep = exposureState.exposureCompensationStep.toFloat()
-                                                Log.d(TAG, "EV Range: $exposureRange, EV Step: $evStep")
+                                                val cameraEvStep = exposureState.exposureCompensationStep.toFloat()
+                                                Log.d(TAG, "EV Range: $exposureRange, Camera EV Step: $cameraEvStep")
+                                                Log.d(TAG, "Using settings: numShots=$numShots, evValue=$evValue")
                                                 
-                                                // Calculate target exposure indices
+                                                // Calculate target exposure indices with current values
                                                 val targetEvIndices = calculateEvIndices(
                                                     numShots = numShots,
                                                     evValue = evValue,
                                                     exposureRange = exposureRange,
-                                                    evStep = evStep
+                                                    evStep = cameraEvStep
                                                 )
                                                 
                                                 Log.d(TAG, "Target EV indices: $targetEvIndices")
@@ -275,6 +283,9 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                                                     // Set exposure compensation
                                                     cameraControl.setExposureCompensationIndex(evIndex).await()
                                                     
+                                                    // Add a small delay to allow camera parameters to settle
+                                                    kotlinx.coroutines.delay(300)
+                                                    
                                                     // Capture image
                                                     val bitmap = captureImage(
                                                         imageCapture = imageCaptureUseCase,
@@ -285,31 +296,43 @@ fun CameraScreen(onNavigateBack: () -> Unit = {}) {
                                                     Log.d(TAG, "Captured image at EV index: $evIndex")
                                                 }
                                                 
-                                                Log.d(TAG, "Captured ${capturedImages.size} images")
+                                                Log.d(TAG, "Captured ${capturedImages.size} images for ${numShots} requested shots, with EV step: $evValue")
                                                 
-                                                // Save the middle image (best exposed) as HDR 
+                                                // Save all captured images
                                                 if (capturedImages.isNotEmpty()) {
                                                     // Check if we need and have storage permission
                                                     val hasStoragePermission = !needsStoragePermission || 
                                                             storagePermissionState.status.isGranted
                                                     
                                                     if (hasStoragePermission) {
-                                                        // Get the middle image (usually best exposed)
-                                                        val imageToSave = capturedImages[capturedImages.size / 2]
+                                                        // Save each image in the batch
+                                                        for (i in capturedImages.indices) {
+                                                            val evIndex = targetEvIndices.getOrNull(i) ?: 0
+                                                            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                                                            val fileName = "HDR_IMG_${timestamp}_EV${if(evIndex >= 0) "+" else ""}${evIndex}.jpg"
+                                                            
+                                                            ImageSaver.saveBitmapToGallery(
+                                                                context = context,
+                                                                bitmap = capturedImages[i],
+                                                                displayName = fileName
+                                                            )
+                                                            Log.d(TAG, "Saved image $i with EV: $evIndex as $fileName")
+                                                        }
                                                         
-                                                        // Save using our new ImageSaver utility
+                                                        // Also save the middle image as the HDR result
+                                                        val midIndex = capturedImages.size / 2
                                                         val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-                                                        val fileName = "HDR_IMG_${timestamp}.jpg"
+                                                        val fileName = "HDR_RESULT_${timestamp}.jpg"
                                                         val saved = ImageSaver.saveBitmapToGallery(
                                                             context = context,
-                                                            bitmap = imageToSave,
+                                                            bitmap = capturedImages[midIndex],
                                                             displayName = fileName
                                                         )
                                                         
                                                         if (saved) {
-                                                            snackbarHostState.showSnackbar("HDR image saved to gallery")
+                                                            snackbarHostState.showSnackbar("${capturedImages.size} HDR images saved to gallery")
                                                         } else {
-                                                            snackbarHostState.showSnackbar("Failed to save HDR image")
+                                                            snackbarHostState.showSnackbar("Failed to save some HDR images")
                                                         }
                                                     } else {
                                                         // Show message if we don't have permission
@@ -392,6 +415,9 @@ private fun calculateEvIndices(
     exposureRange: android.util.Range<Int>,
     evStep: Float
 ): List<Int> {
+    Log.d(TAG, "calculateEvIndices called with numShots=$numShots, evValue=$evValue, " +
+            "exposureRange=$exposureRange, cameraEvStep=$evStep")
+    
     val result = mutableListOf<Int>()
     
     // For even number of shots, we don't include 0 EV
@@ -400,8 +426,13 @@ private fun calculateEvIndices(
     val maxSteps = if (includeZero) (numShots - 1) / 2 else numShots / 2
     
     // Calculate the step size in exposure indices
+    // evValue is the user-selected EV step from the slider (how far apart each exposure should be)
+    // evStep is the camera's native EV step size (how the camera increments exposure)
     val stepSizeInEV = evValue
     val stepSizeInIndices = (stepSizeInEV / evStep).roundToInt()
+    
+    Log.d(TAG, "Step calculations: includeZero=$includeZero, maxSteps=$maxSteps, " +
+            "stepSizeInEV=$stepSizeInEV, stepSizeInIndices=$stepSizeInIndices")
     
     if (includeZero) {
         // Add the zero (base) exposure
@@ -414,31 +445,50 @@ private fun calculateEvIndices(
             
             if (positiveEV <= exposureRange.upper) {
                 result.add(positiveEV)
+            } else {
+                Log.d(TAG, "Skipping positive EV $positiveEV as it exceeds upper range ${exposureRange.upper}")
             }
             
             if (negativeEV >= exposureRange.lower) {
                 result.add(negativeEV)
+            } else {
+                Log.d(TAG, "Skipping negative EV $negativeEV as it exceeds lower range ${exposureRange.lower}")
             }
         }
     } else {
         // Even number of shots, don't include 0 EV
+        // For even-numbered shots, we'll take pairs of shots above and below the base exposure
         for (i in 1..maxSteps) {
+            // Calculate even-spaced EV indices centered around zero
             val halfStep = stepSizeInIndices / 2
             val positiveEV = (2 * i - 1) * halfStep
             val negativeEV = -(2 * i - 1) * halfStep
             
             if (positiveEV <= exposureRange.upper) {
                 result.add(positiveEV)
+            } else {
+                Log.d(TAG, "Skipping positive EV $positiveEV as it exceeds upper range ${exposureRange.upper}")
             }
             
             if (negativeEV >= exposureRange.lower) {
                 result.add(negativeEV)
+            } else {
+                Log.d(TAG, "Skipping negative EV $negativeEV as it exceeds lower range ${exposureRange.lower}")
             }
         }
     }
     
-    // Sort the indices to ensure they're in order
-    return result.sorted()
+    // Sort the indices to ensure they're in order from lowest to highest exposure
+    val sortedResult = result.sorted()
+    Log.d(TAG, "Final EV indices: $sortedResult (total: ${sortedResult.size} shots)")
+    
+    // If we have no shots within range, just add the base exposure
+    if (sortedResult.isEmpty()) {
+        Log.d(TAG, "No valid exposures found, adding base exposure (0)")
+        return listOf(0)
+    }
+    
+    return sortedResult
 }
 
 // Function to capture an image and convert to Bitmap
@@ -496,4 +546,4 @@ private fun ImageProxy.toBitmap(): Bitmap {
 @Composable
 fun CameraScreenPreview() {
     CameraScreen()
-} 
+}
