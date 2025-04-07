@@ -51,6 +51,11 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     
+    // Kotlin standard library - add explicit version
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:1.9.22")
+    
     // CameraX Core libraries
     implementation("androidx.camera:camera-core:1.3.3")
     implementation("androidx.camera:camera-camera2:1.3.3")
@@ -71,12 +76,11 @@ dependencies {
     // Navigation Compose
     implementation("androidx.navigation:navigation-compose:2.7.7")
     
-    // Coil for image loading
-    implementation("io.coil-kt:coil-compose:2.5.0")
-    
-    // OkHttp for custom image loading
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    // Glide for image loading
+    implementation("com.github.bumptech.glide:glide:4.16.0")
+    annotationProcessor("com.github.bumptech.glide:compiler:4.16.0")
+    // Glide Compose integration
+    implementation("com.github.bumptech.glide:compose:1.0.0-beta01")
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
